@@ -1,6 +1,6 @@
 /* オフラインでも開けるように、アプリ本体だけキャッシュする。写真は IndexedDB 側。 */
-var CACHE = 'sanpo-bingo-v1';
-var ASSETS = ['./', 'index.html', 'styles.css', 'missions.js', 'store.js', 'app.js', 'icon.svg', 'manifest.json'];
+var CACHE = 'sanpo-bingo-v2';
+var ASSETS = ['./', 'index.html', 'styles.css', 'missions.js', 'store.js', 'zip.js', 'app.js', 'icon.svg', 'manifest.json'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(ASSETS); }).then(function () {

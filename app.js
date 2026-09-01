@@ -474,6 +474,112 @@
     toastTimer = setTimeout(function () { el.toast.classList.remove('is-open'); }, 1800);
   }
 
+  /* ---------- 書き出し ---------- */
+
+  function safeName(text) {
+    return String(text).replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '');
+  }
+
+  function fileNameOf(record) {
+    var d = new Date(record.at);
+    var stamp = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+      '_' + pad(d.getHours()) + pad(d.getMinutes());
+    return stamp + '_' + safeName(record.title) + '.jpg';
+  }
+
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+  // 同じ日に同じミッション名があってもファイル名が衝突しないようにする
+  function uniqueNames(rows) {
+    var used = {};
+    return rows.map(function (r) {
+      var base = fileNameOf(r);
+      var name = base;
+      var dot = base.lastIndexOf('.');
+      var n = 2;
+      while (used[name]) name = base.slice(0, dot) + '-' + (n++) + base.slice(dot);
+      used[name] = true;
+      return { record: r, name: name };
+    });
+  }
+
+  function buildZip(rows) {
+    var named = uniqueNames(rows.slice().sort(function (a, b) { return a.at - b.at; }));
+    var list = named.map(function (n) {
+      return { name: n.name, data: n.record.blob, date: new Date(n.record.at) };
+    });
+    // 何をいつ撮ったかのメモも一緒に入れておく
+    var memo = named.map(function (n) {
+      return [n.name, n.record.title, n.record.category,
+        new Date(n.record.at).toLocaleString('ja-JP'), formatRange(weekIndexFrom(n.record))].join('\t');
+    });
+    memo.unshift(['ファイル名', 'ミッション', 'カテゴリ', '撮影日時', '週'].join('\t'));
+    list.push({ name: 'ミッション一覧.txt', data: memo.join('\r\n') + '\r\n', date: new Date() });
+    return makeZip(list);
+  }
+
+  function weekIndexFrom(record) {
+    return typeof record.weekIndex === 'number' ? record.weekIndex : Number(String(record.week).slice(1));
+  }
+
+  function zipName(rows) {
+    var weeks = rows.map(weekIndexFrom);
+    var single = weeks.every(function (w) { return w === weeks[0]; });
+    var r = weekRange(single ? weeks[0] : Math.max.apply(null, weeks));
+    var stamp = r.start.getFullYear() + '-' + pad(r.start.getMonth() + 1) + '-' + pad(r.start.getDate());
+    return 'さんぽビンゴ_' + stamp + (single ? '' : '_まとめて') + '.zip';
+  }
+
+  function saveBlob(blob, name) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+  }
+
+  function exportRows(rows, button) {
+    if (!rows.length) { toast('書き出す写真がありません'); return; }
+    var label = button ? button.textContent : '';
+    if (button) { button.disabled = true; button.textContent = '書き出し中…'; }
+    buildZip(rows).then(function (blob) {
+      saveBlob(blob, zipName(rows));
+      toast(rows.length + '枚を書き出しました');
+    }).catch(function (e) {
+      console.error(e);
+      toast('書き出せませんでした…');
+    }).then(function () {
+      if (button) { button.disabled = false; button.textContent = label; }
+    });
+  }
+
+  // スマホでは、共有シート経由のほうが写真アプリに直接しまえる
+  function canSharePhotos(rows) {
+    if (!navigator.canShare || !navigator.share || !window.File) return false;
+    try {
+      return navigator.canShare({ files: [new File([rows[0].blob], 'test.jpg', { type: 'image/jpeg' })] });
+    } catch (e) { return false; }
+  }
+
+  function sharePhotos(rows, button) {
+    var named = uniqueNames(rows.slice().sort(function (a, b) { return a.at - b.at; }));
+    var files = named.map(function (n) {
+      return new File([n.record.blob], n.name, { type: n.record.blob.type || 'image/jpeg' });
+    });
+    var label = button ? button.textContent : '';
+    if (button) { button.disabled = true; }
+    navigator.share({ files: files, title: 'さんぽビンゴの写真' }).catch(function (e) {
+      if (e && e.name === 'AbortError') return;   // ユーザーが共有をやめただけ
+      console.error(e);
+      toast('共有できませんでした…');
+    }).then(function () {
+      if (button) { button.disabled = false; button.textContent = label; }
+    });
+  }
+
   /* ---------- アルバム ---------- */
 
   var albumUrls = [];
@@ -488,17 +594,26 @@
         el.album.innerHTML = '<p class="empty">まだ写真がありません。<br>今週のビンゴから始めましょう。</p>';
         return;
       }
+
+      el.album.appendChild(exportBar(rows));
+
       var groups = {};
       rows.forEach(function (r) {
-        var wi = typeof r.weekIndex === 'number' ? r.weekIndex : Number(String(r.week).slice(1));
-        (groups[wi] = groups[wi] || []).push(r);
+        (groups[weekIndexFrom(r)] = groups[weekIndexFrom(r)] || []).push(r);
       });
       Object.keys(groups).map(Number).sort(function (a, b) { return b - a; }).forEach(function (wi) {
         var list = groups[wi].sort(function (a, b) { return a.cell - b.cell; });
+
         var head = document.createElement('h2');
         head.className = 'album-week';
-        head.innerHTML = '<span>' + formatRange(wi) + '</span><small>' + list.length + '/' + SIZE + 'マス' +
-          (wi === state.weekIndex ? '・今週' : '') + '</small>';
+        head.innerHTML = '<span>' + formatRange(wi) + '</span>' +
+          '<small>' + list.length + '/' + SIZE + 'マス' + (wi === state.weekIndex ? '・今週' : '') + '</small>';
+        var weekSave = document.createElement('button');
+        weekSave.type = 'button';
+        weekSave.className = 'link-btn';
+        weekSave.textContent = 'この週を書き出す';
+        weekSave.addEventListener('click', function () { exportRows(list, weekSave); });
+        head.appendChild(weekSave);
         el.album.appendChild(head);
 
         var grid = document.createElement('div');
@@ -516,6 +631,38 @@
         el.album.appendChild(grid);
       });
     });
+  }
+
+  function exportBar(rows) {
+    var bar = document.createElement('div');
+    bar.className = 'export-bar';
+
+    var text = document.createElement('p');
+    text.className = 'export-text';
+    text.textContent = '写真' + rows.length + '枚。端末の中にしかないので、ときどき書き出しておくと安心です。';
+    bar.appendChild(text);
+
+    var actions = document.createElement('div');
+    actions.className = 'export-actions';
+
+    var zip = document.createElement('button');
+    zip.type = 'button';
+    zip.className = 'btn btn-primary';
+    zip.textContent = '⬇️ すべてZIPで書き出す';
+    zip.addEventListener('click', function () { exportRows(rows, zip); });
+    actions.appendChild(zip);
+
+    if (canSharePhotos(rows)) {
+      var share = document.createElement('button');
+      share.type = 'button';
+      share.className = 'btn';
+      share.textContent = '📤 写真アプリなどに送る';
+      share.addEventListener('click', function () { sharePhotos(rows, share); });
+      actions.appendChild(share);
+    }
+
+    bar.appendChild(actions);
+    return bar;
   }
 
   function openViewer(url, record) {
