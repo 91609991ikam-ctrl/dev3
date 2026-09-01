@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#5b8c5a">
+<meta name="description" content="毎週9つのゆるいミッションが届く、散歩のおともビンゴ。見つけたら写真でクリア。">
+<title>さんぽビンゴ</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="app-header">
+  <div class="app-header-row">
+    <h1 class="app-title">🚶 さんぽビンゴ</h1>
+    <div class="week-badge">
+      <span id="weekRange">-</span>
+      <small id="weekLeft">-</small>
+    </div>
+  </div>
+  <p class="headline" id="headline">今週のミッションを読み込み中…</p>
+  <div class="stats">
+    <div class="stat"><span class="stat-label">クリア</span><span class="stat-value" id="statCleared">0 / 9</span></div>
+    <div class="stat"><span class="stat-label">ビンゴ</span><span class="stat-value" id="statBingo">0</span></div>
+    <div class="progress"><div class="progress-bar" id="progressBar"></div></div>
+  </div>
+</header>
+
+<main>
+  <section id="viewBoard">
+    <div class="board" id="board" aria-label="今週のビンゴカード"></div>
+    <p class="note">写真はこの端末の中だけに保存されます。どこにも送信されません。</p>
+  </section>
+
+  <section id="viewAlbum" hidden>
+    <div class="album" id="album"></div>
+  </section>
+</main>
+
+<nav class="tabbar">
+  <button type="button" id="tabBoard" class="tab is-active">🎯 今週</button>
+  <button type="button" id="tabAlbum" class="tab">🖼 アルバム</button>
+</nav>
+
+<!-- ミッション詳細 -->
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-panel" role="dialog" aria-modal="true">
+    <button type="button" class="sheet-close" id="btnCloseSheet" aria-label="閉じる">×</button>
+    <p class="sheet-cat" id="sheetCat"></p>
+    <h2 class="sheet-title" id="sheetTitle"></h2>
+    <p class="sheet-hint" id="sheetHint"></p>
+    <img class="sheet-photo" id="sheetPhoto" alt="クリア写真" hidden>
+    <p class="sheet-meta" id="sheetMeta" hidden></p>
+    <div class="sheet-actions">
+      <button type="button" class="btn btn-primary" id="btnShoot">📷 写真をとってクリア</button>
+      <button type="button" class="btn" id="btnPick">🖼 アルバムから選ぶ</button>
+      <button type="button" class="btn btn-quiet" id="btnReroll">🔄 このミッションを引き直す</button>
+      <button type="button" class="btn btn-danger" id="btnDelete" hidden>🗑 写真を削除</button>
+    </div>
+  </div>
+</div>
+
+<!-- 写真ビューア -->
+<div class="viewer" id="viewer" hidden>
+  <img id="viewerImg" alt="">
+  <p id="viewerCaption"></p>
+</div>
+
+<!-- お祝い -->
+<div class="celebrate" id="celebrate" hidden>
+  <div class="confetti" id="confetti"></div>
+  <div class="celebrate-card">
+    <h2 id="celebrateTitle">ビンゴ！</h2>
+    <p id="celebrateText"></p>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<input type="file" id="fileCamera" accept="image/*" capture="environment" hidden>
+<input type="file" id="filePick" accept="image/*" hidden>
+
+<script src="missions.js"></script>
+<script src="store.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
