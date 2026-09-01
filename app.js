@@ -616,7 +616,7 @@
       if (!document.hidden) checkWeekRollover();
     });
 
-    if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
+    if (!window.SANPO_SINGLE_FILE && 'serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
       navigator.serviceWorker.register('sw.js').catch(function () { /* オフライン対応は任意 */ });
     }
   }

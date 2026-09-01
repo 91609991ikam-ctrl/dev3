@@ -14,8 +14,9 @@
   --radius: 16px;
   --shadow: 0 2px 10px rgba(58, 62, 48, .08);
 }
+/* OSの設定がダークのとき（ただしライトを明示的に選んでいる場合は除く） */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #171a16;
     --bg-soft: #212520;
     --ink: #e8ece5;
@@ -28,6 +29,21 @@
     --danger: #e08a7d;
     --shadow: 0 2px 12px rgba(0, 0, 0, .35);
   }
+}
+
+/* テーマを手動でダークにしている場合 */
+:root[data-theme="dark"] {
+  --bg: #171a16;
+  --bg-soft: #212520;
+  --ink: #e8ece5;
+  --ink-soft: #a3ada1;
+  --line: #333a31;
+  --accent: #8fc07f;
+  --on-accent: #161b14;
+  --accent-soft: #2a3428;
+  --gold: #e2b45c;
+  --danger: #e08a7d;
+  --shadow: 0 2px 12px rgba(0, 0, 0, .35);
 }
 
 * { box-sizing: border-box; }
