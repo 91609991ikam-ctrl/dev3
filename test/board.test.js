@@ -24,6 +24,14 @@ const titles = CATS.flatMap(c => c.items.map(i => i.t));
 assert.strictEqual(new Set(titles).size, titles.length, 'ミッション名が重複している');
 assert.ok(CATS.length >= 9, 'カテゴリは9つ以上必要');
 
+// 消し忘れの穴（[a, , b] のような抜け）や項目落ちがないこと
+CATS.forEach(c => {
+  assert.ok(c.items.length >= 1, `${c.key}: ミッションが空`);
+  c.items.forEach((it, i) => {
+    assert.ok(it && it.t && it.h, `${c.key}#${i}: ミッションが欠けている`);
+  });
+});
+
 const seen = new Map();
 const gaps = [];
 const used = new Set();

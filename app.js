@@ -382,6 +382,7 @@
         cell: cell,
         missionId: mission.id,
         title: mission.title,
+        hint: mission.hint,
         category: mission.label,
         icon: mission.icon,
         at: Date.now(),
@@ -690,6 +691,25 @@
 
   /* ---------- 読み込み ---------- */
 
+  // ミッション一覧を後から編集しても、すでにクリアしたマスは
+  // 「その写真を撮ったときのミッション」を表示しつづける
+  function applyClearedMissions() {
+    Object.keys(state.photos).forEach(function (cell) {
+      var record = state.photos[cell];
+      var mission = state.board[cell];
+      if (!record || !mission || !record.title || record.title === mission.title) return;
+      state.board[cell] = {
+        id: record.missionId || mission.id,
+        catKey: mission.catKey,
+        itemIndex: mission.itemIndex,
+        label: record.category || mission.label,
+        icon: record.icon || mission.icon,
+        title: record.title,
+        hint: record.hint || 'この写真を撮ったときのミッションです。'
+      };
+    });
+  }
+
   function loadWeek() {
     var key = weekKey(state.weekIndex);
     return Store.getWeek(key).then(function (wd) {
@@ -702,6 +722,7 @@
       state.urls = {};
       state.photos = {};
       rows.forEach(function (r) { state.photos[r.cell] = r; });
+      applyClearedMissions();
       render();
     });
   }
