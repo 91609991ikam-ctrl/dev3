@@ -154,13 +154,41 @@
     return missionRef(cat.key, deck[((index % n) + n) % n]);
   }
 
+  // 9マスのカテゴリは毎週くじ引き。重複を避けないので、同じジャンルが
+  // 2〜3マス並ぶ週もあれば、まったく出ないジャンルもある。
+  function categoriesForWeek(index) {
+    var rnd = mulberry32(hashString('slots:' + index));
+    var out = [];
+    for (var i = 0; i < SIZE; i++) out.push(CATS[Math.floor(rnd() * CATS.length)]);
+    return out;
+  }
+
+  // カテゴリごとの山札は「そのカテゴリが今までに何回引かれたか」で進む。
+  // 週によって引かれる回数が変わるので、最初の週から数え上げてキャッシュする。
+  var stream = null;
+
+  function usageBefore(index) {
+    if (!stream || stream.week > index) stream = { week: 0, use: {} };
+    while (stream.week < index) {
+      categoriesForWeek(stream.week).forEach(function (cat) {
+        stream.use[cat.key] = (stream.use[cat.key] || 0) + 1;
+      });
+      stream.week++;
+    }
+    return stream.use;
+  }
+
   function buildBoard(index, rerolls) {
-    var cats = shuffled(CATS, hashString('week:' + index)).slice(0, SIZE);
-    // マス番号ではなく週番号だけで引くので、同じミッションはカテゴリの山札
-    // （12枚）を一周するまで戻ってこない。
-    var board = cats.map(function (cat) {
-      return pickFromCategory(cat, index);
+    var use = {};
+    var before = usageBefore(index);
+    Object.keys(before).forEach(function (k) { use[k] = before[k]; });
+
+    var board = categoriesForWeek(index).map(function (cat) {
+      var drawn = use[cat.key] || 0;
+      use[cat.key] = drawn + 1;
+      return pickFromCategory(cat, drawn);
     });
+
     Object.keys(rerolls || {}).forEach(function (cell) {
       var ref = rerolls[cell];
       var n = Number(cell);
