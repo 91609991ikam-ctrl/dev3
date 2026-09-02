@@ -58,6 +58,27 @@
       }).then(function (rows) { return rows || []; });
     },
 
+    // 週ごとの枚数だけを、写真本体を読まずに数える（アルバム一覧を軽くするため）
+    countByWeek: function () {
+      return tx('photos', 'readonly', function (s) {
+        return s.index('week').getAllKeys();
+      }).then(function (keys) {
+        var counts = {};
+        (keys || []).forEach(function (id) {
+          var week = String(id).split(':')[0];
+          counts[week] = (counts[week] || 0) + 1;
+        });
+        return counts;
+      });
+    },
+
+    // その週の代表として、いちばん若いマスの写真を1枚だけ読む
+    getCover: function (week) {
+      return tx('photos', 'readonly', function (s) {
+        return s.index('week').getAll(week, 1);
+      }).then(function (rows) { return (rows && rows[0]) || null; });
+    },
+
     getAllPhotos: function () {
       return tx('photos', 'readonly', function (s) { return s.getAll(); })
         .then(function (rows) { return rows || []; });

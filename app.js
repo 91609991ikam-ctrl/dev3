@@ -219,11 +219,47 @@
       canvas.getContext('2d').drawImage(img, 0, 0, cw, ch);
       if (img.close) img.close();
       return new Promise(function (resolve) {
-        canvas.toBlob(function (blob) { resolve(blob || file); }, 'image/jpeg', 0.82);
+        // toBlob が空を返すこともある。その場合も元画像をそのまま渡さない
+        canvas.toBlob(function (blob) {
+          resolve(blob || stripJpegMetadata(file));
+        }, 'image/jpeg', 0.82);
       });
     }).catch(function () {
-      return file; // 縮小に失敗しても、元の写真は保存する
+      // 縮小に失敗しても写真は残す。ただし位置情報などを載せたままにはしない
+      return stripJpegMetadata(file);
     });
+  }
+
+  // JPEGからAPP1〜APP15（EXIF・GPS・XMPなど）を取り除く。
+  // 通常はcanvasを通す時点で消えるが、縮小に失敗した写真はここで剥がす。
+  function stripJpegMetadata(file) {
+    if (!file || file.type !== 'image/jpeg' || !file.arrayBuffer) return Promise.resolve(file);
+    return file.arrayBuffer().then(function (buffer) {
+      var bytes = new Uint8Array(buffer);
+      if (bytes[0] !== 0xFF || bytes[1] !== 0xD8) return file;
+
+      var parts = [bytes.subarray(0, 2)];
+      var i = 2;
+      var reachedImage = false;
+
+      while (i + 3 < bytes.length) {
+        if (bytes[i] !== 0xFF) break;
+        var marker = bytes[i + 1];
+        if (marker === 0xD9 || (marker >= 0xD0 && marker <= 0xD8)) { i += 2; continue; }
+        if (marker === 0xDA) {           // ここから先は画像データ本体
+          parts.push(bytes.subarray(i));
+          reachedImage = true;
+          break;
+        }
+        var length = (bytes[i + 2] << 8) | bytes[i + 3];
+        if (length < 2 || i + 2 + length > bytes.length) break;
+        if (marker < 0xE1 || marker > 0xEF) parts.push(bytes.subarray(i, i + 2 + length));
+        i += 2 + length;
+      }
+
+      if (!reachedImage) return file;   // 読み解けなかったときは触らない
+      return new Blob(parts, { type: 'image/jpeg' });
+    }).catch(function () { return file; });
   }
 
   function loadBitmap(file) {
@@ -254,7 +290,11 @@
     photos: {},        // cell -> record
     urls: {},          // cell -> objectURL
     openCell: null,
-    tab: 'board'
+    tab: 'board',
+    albumWeek: null,      // null = 週フォルダの一覧を表示
+    selecting: false,     // 「選んで送る」モード
+    selectable: {},       // cell -> 写真レコード
+    selected: {}
   };
 
   var el = {};
@@ -381,12 +421,14 @@
       ? '🔄 このミッションを引き直す（今週あと' + (MAX_REROLLS - rerollsUsed) + '回）'
       : '🔄 今週の引き直しはもう使いました';
 
+    disarmDelete();
     el.sheet.hidden = false;
     document.body.classList.add('is-locked');
     requestAnimationFrame(function () { el.sheet.classList.add('is-open'); });
   }
 
   function closeSheet() {
+    disarmDelete();
     el.sheet.classList.remove('is-open');
     document.body.classList.remove('is-locked');
     state.openCell = null;
@@ -432,6 +474,30 @@
     }).then(function () {
       el.btnShoot.disabled = false;
     });
+  }
+
+  var deleteArmed = false;
+  var deleteTimer = null;
+
+  function armDelete() {
+    if (!deleteArmed) {
+      // 誤タップで消えないよう、1回目は確認に変えるだけ
+      deleteArmed = true;
+      el.btnDelete.textContent = '⚠️ もう一度タップで削除';
+      el.btnDelete.classList.add('is-armed');
+      clearTimeout(deleteTimer);
+      deleteTimer = setTimeout(disarmDelete, 5000);
+      return;
+    }
+    disarmDelete();
+    deletePhoto();
+  }
+
+  function disarmDelete() {
+    deleteArmed = false;
+    clearTimeout(deleteTimer);
+    el.btnDelete.textContent = '🗑 写真を削除';
+    el.btnDelete.classList.remove('is-armed');
   }
 
   function deletePhoto() {
@@ -609,90 +675,248 @@
     });
   }
 
-  /* ---------- アルバム ---------- */
+  /* ---------- アルバム（週ごとのフォルダ） ---------- */
 
   var albumUrls = [];
 
-  function renderAlbum() {
+  function releaseAlbumUrls() {
     albumUrls.forEach(URL.revokeObjectURL);
     albumUrls = [];
-    el.album.innerHTML = '';
+  }
 
-    Store.getAllPhotos().then(function (rows) {
-      if (!rows.length) {
+  function albumUrl(blob) {
+    var url = URL.createObjectURL(blob);
+    albumUrls.push(url);
+    return url;
+  }
+
+  function renderAlbum() {
+    releaseAlbumUrls();
+    exitSelectMode();
+    el.album.innerHTML = '';
+    if (state.albumWeek === null) renderWeekList();
+    else renderWeekFolder(state.albumWeek);
+  }
+
+  // 週フォルダの一覧。写真は各週1枚しか読まないので、たまっても重くならない。
+  function renderWeekList() {
+    Store.countByWeek().then(function (counts) {
+      var weeks = Object.keys(counts).map(function (key) {
+        return { week: key, index: Number(key.slice(1)), count: counts[key] };
+      }).sort(function (a, b) { return b.index - a.index; });
+
+      if (!weeks.length) {
         el.album.innerHTML = '<p class="empty">まだ写真がありません。<br>今週のビンゴから始めましょう。</p>';
         return;
       }
 
-      el.album.appendChild(exportBar(rows));
+      var total = weeks.reduce(function (n, w) { return n + w.count; }, 0);
+      el.album.appendChild(exportBar(total));
 
-      var groups = {};
-      rows.forEach(function (r) {
-        (groups[weekIndexFrom(r)] = groups[weekIndexFrom(r)] || []).push(r);
-      });
-      Object.keys(groups).map(Number).sort(function (a, b) { return b - a; }).forEach(function (wi) {
-        var list = groups[wi].sort(function (a, b) { return a.cell - b.cell; });
+      var grid = document.createElement('div');
+      grid.className = 'folder-grid';
+      el.album.appendChild(grid);
 
-        var head = document.createElement('h2');
-        head.className = 'album-week';
-        head.innerHTML = '<span>' + formatRange(wi) + '</span>' +
-          '<small>' + list.length + '/' + SIZE + 'マス' + (wi === state.weekIndex ? '・今週' : '') + '</small>';
-        var weekSave = document.createElement('button');
-        weekSave.type = 'button';
-        weekSave.className = 'link-btn';
-        weekSave.textContent = 'この週を書き出す';
-        weekSave.addEventListener('click', function () { exportRows(list, weekSave); });
-        head.appendChild(weekSave);
-        el.album.appendChild(head);
-
-        var grid = document.createElement('div');
-        grid.className = 'album-grid';
-        list.forEach(function (r) {
-          var url = URL.createObjectURL(r.blob);
-          albumUrls.push(url);
-          var fig = document.createElement('figure');
-          fig.className = 'album-item';
-          fig.innerHTML = '<img src="' + url + '" alt="' + escapeHtml(r.title) + '" loading="lazy">' +
-            '<figcaption>' + escapeHtml(r.title) + '</figcaption>';
-          fig.addEventListener('click', function () { openViewer(url, r); });
-          grid.appendChild(fig);
+      weeks.forEach(function (w) {
+        var card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'folder';
+        card.innerHTML =
+          '<span class="folder-cover"></span>' +
+          '<span class="folder-body">' +
+            '<span class="folder-title">' + formatRange(w.index) + '</span>' +
+            '<span class="folder-meta">' + w.count + '/' + SIZE + 'マス' +
+              (w.index === state.weekIndex ? '<em class="folder-now">今週</em>' : '') + '</span>' +
+          '</span>';
+        card.addEventListener('click', function () {
+          state.albumWeek = w.index;
+          renderAlbum();
         });
-        el.album.appendChild(grid);
+        grid.appendChild(card);
+
+        Store.getCover(w.week).then(function (rec) {
+          if (!rec) return;
+          var img = document.createElement('img');
+          img.alt = '';
+          img.loading = 'lazy';
+          img.src = albumUrl(rec.blob);
+          card.querySelector('.folder-cover').appendChild(img);
+        });
       });
     });
   }
 
-  function exportBar(rows) {
+  // 1週ぶんの中身。撮れなかったマスも、そのときの盤面のまま並べる。
+  function renderWeekFolder(weekIndex) {
+    var key = weekKey(weekIndex);
+
+    Promise.all([Store.getWeek(key), Store.getPhotosOfWeek(key)]).then(function (res) {
+      var board = buildBoard(weekIndex, (res[0] && res[0].rerolls) || {});
+      var photos = {};
+      res[1].forEach(function (r) { photos[r.cell] = r; });
+
+      var head = document.createElement('div');
+      head.className = 'folder-head';
+      var back = document.createElement('button');
+      back.type = 'button';
+      back.className = 'back-btn';
+      back.textContent = '‹ 週の一覧';
+      back.addEventListener('click', function () {
+        state.albumWeek = null;
+        renderAlbum();
+      });
+      head.appendChild(back);
+      var title = document.createElement('h2');
+      title.className = 'folder-head-title';
+      title.innerHTML = formatRange(weekIndex) +
+        '<small>' + res[1].length + '/' + SIZE + 'マス・ビンゴ' + countLines(photos) + '</small>';
+      head.appendChild(title);
+      el.album.appendChild(head);
+
+      var actions = document.createElement('div');
+      actions.className = 'folder-actions';
+      var zip = document.createElement('button');
+      zip.type = 'button';
+      zip.className = 'btn';
+      zip.textContent = '⬇️ この週をZIPで書き出す';
+      zip.disabled = !res[1].length;
+      zip.addEventListener('click', function () { exportRows(res[1], zip); });
+      actions.appendChild(zip);
+
+      if (res[1].length && canSharePhotos(res[1])) {
+        var pick = document.createElement('button');
+        pick.type = 'button';
+        pick.className = 'btn';
+        pick.textContent = '📤 写真を選んで送る';
+        pick.addEventListener('click', function () { enterSelectMode(photos); });
+        actions.appendChild(pick);
+      }
+      el.album.appendChild(actions);
+
+      var grid = document.createElement('div');
+      grid.className = 'folder-board';
+      board.forEach(function (mission, cell) {
+        var record = photos[cell];
+        var item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'shot' + (record ? '' : ' is-empty');
+        item.dataset.cell = String(cell);
+
+        if (record) {
+          var url = albumUrl(record.blob);
+          item.innerHTML = '<img src="' + url + '" alt="' + escapeHtml(record.title) + '" loading="lazy">' +
+            '<span class="shot-check">✓</span>' +
+            '<span class="shot-title">' + escapeHtml(record.title) + '</span>';
+          item.addEventListener('click', function () {
+            if (state.selecting) toggleSelected(cell, item);
+            else openViewer(url, record);
+          });
+        } else {
+          item.innerHTML = '<span class="shot-title">' + escapeHtml(mission.title) + '</span>' +
+            '<span class="shot-miss">とれなかった</span>';
+          item.disabled = true;
+        }
+        grid.appendChild(item);
+      });
+      el.album.appendChild(grid);
+    });
+  }
+
+  function countLines(photos) {
+    return LINES.filter(function (line) {
+      return line.every(function (c) { return !!photos[c]; });
+    }).length;
+  }
+
+  /* ---------- 選んで送る ---------- */
+
+  function enterSelectMode(photos) {
+    state.selecting = true;
+    state.selectable = photos;
+    state.selected = {};
+    el.album.classList.add('is-selecting');
+    el.selectBar.hidden = false;
+    updateSelectBar();
+  }
+
+  function exitSelectMode() {
+    state.selecting = false;
+    state.selectable = {};
+    state.selected = {};
+    el.album.classList.remove('is-selecting');
+    el.selectBar.hidden = true;
+    // 選択の見た目も戻す
+    Array.prototype.forEach.call(el.album.querySelectorAll('.shot.is-picked'), function (node) {
+      node.classList.remove('is-picked');
+    });
+  }
+
+  function toggleSelected(cell, node) {
+    if (state.selected[cell]) delete state.selected[cell];
+    else state.selected[cell] = true;
+    node.classList.toggle('is-picked', !!state.selected[cell]);
+    updateSelectBar();
+  }
+
+  function selectedRows() {
+    return Object.keys(state.selected).map(function (cell) { return state.selectable[cell]; })
+      .filter(Boolean)
+      .sort(function (a, b) { return a.cell - b.cell; });
+  }
+
+  function updateSelectBar() {
+    var n = selectedRows().length;
+    var all = Object.keys(state.selectable).length;
+    el.selectCount.textContent = n ? n + '枚を選択中' : '送る写真をタップ';
+    el.btnSelectAll.textContent = (n === all && all > 0) ? 'すべて解除' : 'すべて選ぶ';
+    el.btnSendSelected.disabled = n === 0;
+    el.btnSendSelected.textContent = n ? '📤 ' + n + '枚を送る' : '📤 送る';
+  }
+
+  function toggleSelectAll() {
+    var cells = Object.keys(state.selectable);
+    var pickAll = selectedRows().length !== cells.length;
+    state.selected = {};
+    if (pickAll) cells.forEach(function (c) { state.selected[c] = true; });
+    Array.prototype.forEach.call(el.album.querySelectorAll('.shot:not(.is-empty)'), function (node) {
+      node.classList.toggle('is-picked', !!state.selected[node.dataset.cell]);
+    });
+    updateSelectBar();
+  }
+
+  function sendSelected() {
+    var rows = selectedRows();
+    if (!rows.length) return;
+    sharePhotos(rows, el.btnSendSelected);
+  }
+
+  /* ---------- 書き出しの案内 ---------- */
+
+  function exportBar(total) {
     var bar = document.createElement('div');
     bar.className = 'export-bar';
 
     var text = document.createElement('p');
     text.className = 'export-text';
-    text.textContent = '写真' + rows.length + '枚。端末の中にしかないので、ときどき書き出しておくと安心です。';
+    text.textContent = '写真' + total + '枚。端末の中にしかないので、ときどき書き出しておくと安心です。';
     bar.appendChild(text);
-
-    var actions = document.createElement('div');
-    actions.className = 'export-actions';
 
     var zip = document.createElement('button');
     zip.type = 'button';
     zip.className = 'btn btn-primary';
     zip.textContent = '⬇️ すべてZIPで書き出す';
-    zip.addEventListener('click', function () { exportRows(rows, zip); });
-    actions.appendChild(zip);
-
-    if (canSharePhotos(rows)) {
-      var share = document.createElement('button');
-      share.type = 'button';
-      share.className = 'btn';
-      share.textContent = '📤 写真アプリなどに送る';
-      share.addEventListener('click', function () { sharePhotos(rows, share); });
-      actions.appendChild(share);
-    }
-
-    bar.appendChild(actions);
+    zip.addEventListener('click', function () {
+      zip.disabled = true;
+      Store.getAllPhotos().then(function (rows) {
+        zip.disabled = false;
+        exportRows(rows, zip);
+      }).catch(function () { toast('書き出せませんでした…'); zip.disabled = false; });
+    });
+    bar.appendChild(zip);
     return bar;
   }
+
+  /* ---------- 写真ビューア ---------- */
 
   function openViewer(url, record) {
     el.viewerImg.src = url;
@@ -708,9 +932,13 @@
   }
 
   function setTab(tab) {
+    if (tab !== 'album') state.albumWeek = null;
     state.tab = tab;
     el.viewBoard.hidden = tab !== 'board';
     el.viewAlbum.hidden = tab !== 'album';
+    // アルバムを見ている間は「今週」の進捗を出さない（別の週を見ていると紛らわしい）
+    el.headline.hidden = tab !== 'board';
+    el.stats.hidden = tab !== 'board';
     el.tabBoard.classList.toggle('is-active', tab === 'board');
     el.tabAlbum.classList.toggle('is-active', tab === 'album');
     if (tab === 'album') renderAlbum();
@@ -768,17 +996,28 @@
     }
   }
 
+  // ブラウザに「このデータは勝手に消さないで」と申請する。
+  // 断られても動作に影響はないので、結果は気にしない。
+  function requestPersistence() {
+    if (!navigator.storage || !navigator.storage.persist) return;
+    var check = navigator.storage.persisted ? navigator.storage.persisted() : Promise.resolve(false);
+    check.then(function (already) {
+      if (!already) return navigator.storage.persist();
+    }).catch(function () { /* 使えない環境では何もしない */ });
+  }
+
   function init() {
-    ['board', 'headline', 'weekRange', 'weekLeft', 'statCleared', 'statBingo', 'progressBar',
+    ['board', 'headline', 'stats', 'weekRange', 'weekLeft', 'statCleared', 'statBingo', 'progressBar',
       'sheet', 'sheetCat', 'sheetTitle', 'sheetHint', 'sheetPhoto', 'sheetMeta',
       'btnShoot', 'btnPick', 'btnDelete', 'btnReroll', 'btnCloseSheet',
       'fileCamera', 'filePick', 'toast', 'celebrate', 'celebrateTitle', 'celebrateText', 'confetti',
       'viewBoard', 'viewAlbum', 'album', 'tabBoard', 'tabAlbum',
-      'viewer', 'viewerImg', 'viewerCaption'].forEach(function (id) { el[id] = $(id); });
+      'viewer', 'viewerImg', 'viewerCaption',
+      'selectBar', 'selectCount', 'btnSelectAll', 'btnSendSelected', 'btnCancelSelect'].forEach(function (id) { el[id] = $(id); });
 
     el.btnShoot.addEventListener('click', function () { el.fileCamera.click(); });
     el.btnPick.addEventListener('click', function () { el.filePick.click(); });
-    el.btnDelete.addEventListener('click', deletePhoto);
+    el.btnDelete.addEventListener('click', armDelete);
     el.btnReroll.addEventListener('click', doReroll);
     el.btnCloseSheet.addEventListener('click', closeSheet);
     el.sheet.addEventListener('click', function (e) { if (e.target === el.sheet) closeSheet(); });
@@ -792,12 +1031,16 @@
 
     el.celebrate.addEventListener('click', closeCelebrate);
     el.viewer.addEventListener('click', closeViewer);
+    el.btnSelectAll.addEventListener('click', toggleSelectAll);
+    el.btnSendSelected.addEventListener('click', sendSelected);
+    el.btnCancelSelect.addEventListener('click', exitSelectMode);
     el.tabBoard.addEventListener('click', function () { setTab('board'); });
     el.tabAlbum.addEventListener('click', function () { setTab('album'); });
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape') return;
       if (!el.viewer.hidden) closeViewer();
       else if (!el.sheet.hidden) closeSheet();
+      else if (state.selecting) exitSelectMode();
     });
 
     loadWeek().catch(function (e) {
@@ -807,6 +1050,7 @@
       render();
     });
 
+    requestPersistence();
     setInterval(checkWeekRollover, 60000);
     document.addEventListener('visibilitychange', function () {
       if (!document.hidden) checkWeekRollover();
@@ -825,6 +1069,7 @@
 
   // テスト用に内部関数を公開
   window.__bingo = {
+    stripJpegMetadata: stripJpegMetadata,
     buildBoard: buildBoard, weekIndexOf: weekIndexOf, weekRange: weekRange,
     formatRange: formatRange, pickFromCategory: pickFromCategory, rerollMission: rerollMission
   };

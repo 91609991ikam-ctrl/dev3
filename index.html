@@ -24,7 +24,7 @@
     </div>
   </div>
   <p class="headline" id="headline">今週のミッションを読み込み中…</p>
-  <div class="stats">
+  <div class="stats" id="stats">
     <div class="stat"><span class="stat-label">クリア</span><span class="stat-value" id="statCleared">0 / 9</span></div>
     <div class="stat"><span class="stat-label">ビンゴ</span><span class="stat-value" id="statBingo">0</span></div>
     <div class="progress"><div class="progress-bar" id="progressBar"></div></div>
@@ -63,6 +63,14 @@
       <button type="button" class="btn btn-danger" id="btnDelete" hidden>🗑 写真を削除</button>
     </div>
   </div>
+</div>
+
+<!-- 選んで送るときのバー -->
+<div class="select-bar" id="selectBar" hidden>
+  <button type="button" class="link-btn" id="btnCancelSelect">やめる</button>
+  <span class="select-count" id="selectCount"></span>
+  <button type="button" class="link-btn" id="btnSelectAll">すべて選ぶ</button>
+  <button type="button" class="btn btn-primary btn-send" id="btnSendSelected">📤 送る</button>
 </div>
 
 <!-- 写真ビューア -->
