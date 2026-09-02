@@ -5,8 +5,8 @@
  *   まずキャッシュから即返して、裏で最新版を取りにいってキャッシュを更新する。
  *   歩きながら電波が悪くても起動でき、ミッションを差し替えたときは次の起動で反映される。
  */
-var CACHE = 'sanpo-bingo-v3';
-var ASSETS = ['./', 'index.html', 'styles.css', 'missions.js', 'store.js', 'zip.js', 'app.js', 'icon.svg', 'manifest.json'];
+var CACHE = 'sanpo-bingo-v4';
+var ASSETS = ['./', 'index.html', 'styles.css', 'missions.js', 'store.js', 'zip.js', 'app.js', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'manifest.json'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(ASSETS); }).then(function () {
