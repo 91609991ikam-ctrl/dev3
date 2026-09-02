@@ -1,0 +1,3 @@
+# Keep this walking-bingo page out of search results.
+User-agent: *
+Disallow: /
